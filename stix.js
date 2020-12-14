@@ -16,6 +16,110 @@ function tok(type, value) {
 	return { type: type, value: value };
 }
 
+// FABRIK Implementation
+/**
+ * 
+ * @param {Stick} stik 
+ */
+function _ikSticks(stik, maxDepth) {
+	maxDepth = maxDepth || stik.ik;
+	if (maxDepth === 0) return null;
+	let n = stik;
+	let nodes = [];
+	let depth = 0;
+	while (n !== null && depth < maxDepth) {
+		nodes.push(n);
+		n = n.parent;
+		depth++;
+	}
+	return nodes;
+}
+
+/**
+ * 
+ * @param {Stick} stik 
+ * @param {Array<Vec2>} segments
+ */
+function _transferIK(stik, segments) {
+	if (stik.ik === 0) return;
+	let n = stik;
+	let i = 0;
+	while (n !== null && i < stik.ik) {
+		let vec = segments[i].sub(segments[i + 1]);
+		let ang = Math.atan2(vec.y, vec.x);
+		let pang = n.parent !== null ? n.parent.globalRotation : 0;
+		n.rotation = ang - pang;
+		n = n.parent;
+		i++;
+	}
+}
+
+/**
+ * 
+ * @param {Vec2} head 
+ * @param {Vec2} tail 
+ * @param {Vec2} tgt 
+ */
+function _reach(head, tail, tgt) {
+	let c_dx = tail.x - head.x;
+	let c_dy = tail.y - head.y;
+	let c_dist = Math.sqrt(c_dx * c_dx + c_dy * c_dy);
+
+	let s_dx = tail.x - tgt.x;
+	let s_dy = tail.y - tgt.y;
+	let s_dist = Math.sqrt(s_dx * s_dx + s_dy * s_dy);
+
+	let scale = c_dist / s_dist;
+
+	return [
+		new Vec2(tgt.x, tgt.y),
+		new Vec2(tgt.x + s_dx * scale, tgt.y + s_dy * scale)
+	];
+}
+
+/**
+ * 
+ * @param {Array<Vec2>} segments
+ * @param {Vec2} tgt 
+ */
+function _fabrik(segments, tgt) {
+	let base = new Vec2(segments[segments.length - 1]);
+
+	// Forward
+	for (let i = 0; i < segments.length - 1; i++) {
+		let r = _reach(segments[i], segments[i + 1], tgt);
+		segments[i] = r[0];
+		tgt = r[1];
+	}
+	segments[segments.length - 1] = tgt;
+
+	// Backward
+	tgt = base;
+	for (let i = segments.length - 1; i > 0; i--) {
+		let r = _reach(segments[i], segments[i - 1], tgt);
+		segments[i] = r[0];
+		tgt = r[1];
+	}
+	segments[0] = tgt;
+}
+
+/**
+ * 
+ * @param {Stick} stik 
+ */
+function _ikNodes(stik) {
+	if (stik.ik === 0) return null;
+	let n = stik;
+	let nodes = [];
+	let depth = 0;
+	while (n !== null && depth <= stik.ik) {
+		nodes.push(new Vec2(n.tipX, n.tipY));
+		n = n.parent;
+		depth++;
+	}
+	return nodes;
+}
+
 class KeyFrame {
 	constructor(frame, rotation, x, y) {
 		this.frame = frame || 0;
@@ -44,6 +148,7 @@ class Stick {
 		this.name = 'stick';
 		this.shape = 'line';
 		this.ik = 0;
+		this.bendy = 0;
 
 		/** @type {Stick} */
 		this.parent = null;
@@ -141,21 +246,86 @@ class Stick {
 		return { x: last.xValue, y: last.yValue, rotation: last.rotationValue };
 	}
 
+	_childBendy(d) {
+		d = d || 0;
+		let cb = false;
+		for (let c of this.children) {
+			if (c.bendy >= 2) {
+				cb = true;
+			} else {
+				cb = c._childBendy(d+1);
+			}
+		}
+		return cb;
+	}
+
+	getClosestBendyChild() {
+		let bc = this.bendy >= 2 ? this : null;
+		if (bc === null) {
+			for (let c of this.children) {
+				let cbc = c.getClosestBendyChild();
+				if (cbc !== null) {
+					bc = cbc;
+					break;
+				}
+			}
+		}
+		return bc;
+	}
+
 	/**
 	 * Renders this stick and its children
 	 * @param {CanvasRenderingContext2D} ctx 
 	 */
 	render(ctx) {
+		let bendyChild = this.getClosestBendyChild();
+
+		let bendySticks = bendyChild !== null ? _ikSticks(bendyChild, bendyChild.bendy) : [];
+		bendySticks.reverse();
+		if (bendySticks.length > 2)
+			bendySticks.splice(0, 1);
+
 		let color = `rgb(${this.color[0]}, ${this.color[1]}, ${this.color[2]})`;
 		ctx.save();
 			if (this.shape === 'line') {
 				ctx.strokeStyle = color;
 				ctx.lineWidth = this.width;
 				ctx.lineCap = 'round';
-				ctx.beginPath();
-				ctx.moveTo(this.globalX, this.globalY);
-				ctx.lineTo(this.tipX, this.tipY);
-				ctx.stroke();
+				ctx.lineJoin = 'round';
+				if (this.bendy >= 2) {
+					let sticks = _ikSticks(this, this.bendy);
+					sticks.reverse();
+
+					let points = [];
+					if (sticks.length === 2) {
+						points.push([ sticks[0].globalX, sticks[0].globalY ]);
+					}
+
+					for (let i = 1; i < sticks.length; i++) {
+						points.push([sticks[i].globalX, sticks[i].globalY]);
+					}
+					points.push([sticks[sticks.length - 1].tipX, sticks[sticks.length - 1].tipY]);
+
+					// console.log(points);
+
+					ctx.beginPath();
+					ctx.moveTo(points[0][0], points[0][1]);
+					let i = 0;
+					for (i = 1; i < points.length-2; i++) {
+						let xc = (points[i][0] + points[i + 1][0]) / 2;
+						let yc = (points[i][1] + points[i + 1][1]) / 2;
+						ctx.quadraticCurveTo(points[i][0], points[i][1], xc, yc);
+					}
+					// last 2 points
+					ctx.quadraticCurveTo(points[i][0], points[i][1], points[i+1][0],points[i+1][1]);
+
+					ctx.stroke();
+				} else if (!bendySticks.includes(this)) {
+					ctx.beginPath();
+					ctx.moveTo(this.globalX, this.globalY);
+					ctx.lineTo(this.tipX, this.tipY);
+					ctx.stroke();
+				}
 			} else if (this.shape === 'circle') {
 				ctx.fillStyle = color;
 				ctx.beginPath();
@@ -314,6 +484,14 @@ class StickParser {
 		return tok('str', str);
 	}
 
+	readBool() {
+		let idTok = this.readIdentifier();
+		let id = idTok.value.toLowerCase();
+		if (id === 'true') return tok('bool', true);
+		else if (id === 'false') return tok('bool', false);
+		return idTok;
+	}
+
 	readAtom() {
 		let p = this.peek();
 		if (p === '\'') {
@@ -321,7 +499,7 @@ class StickParser {
 		} else if (/[0-9-\.]/.test(p)) {
 			return this.readNumber();
 		} else if (/[a-zA-Z_]/.test(p)) {
-			return this.readIdentifier();
+			return this.readBool();
 		} else if (p === '[') {
 			return this.readList();
 		} else {
@@ -415,6 +593,7 @@ class StickParser {
 		ob.shape = stk.shape || 'line';
 		ob.color = stk.color ? stk.color.map(function (e) { return e.value }) : [0,0,0];
 		ob.ik = stk.ik || 0;
+		ob.bendy = stk.bendy || 0;
 
 		if (root) {
 			root.children.push(ob);
@@ -476,108 +655,6 @@ function Vec2(x, y) {
 			Math.lerp(this.y, b.y, t)
 		);
 	};
-}
-
-/**
- * 
- * @param {Stick} stik 
- */
-function _ikNodes(stik) {
-	if (stik.ik === 0) return null;
-	let n = stik;
-	let nodes = [];
-	let depth = 0;
-	while (n !== null && depth <= stik.ik) {
-		nodes.push(new Vec2(n.tipX, n.tipY));
-		n = n.parent;
-		depth++;
-	}
-	return nodes;
-}
-
-/**
- * 
- * @param {Stick} stik 
- */
-function _ikSticks(stik) {
-	if (stik.ik === 0) return null;
-	let n = stik;
-	let nodes = [];
-	let depth = 0;
-	while (n !== null && depth < stik.ik) {
-		nodes.push(n);
-		n = n.parent;
-		depth++;
-	}
-	return nodes;
-}
-
-/**
- * 
- * @param {Stick} stik 
- * @param {Array<Vec2>} segments
- */
-function _transferIK(stik, segments) {
-	if (stik.ik === 0) return;
-	let n = stik;
-	let i = 0;
-	while (n !== null && i < stik.ik) {
-		let vec = segments[i].sub(segments[i + 1]);
-		let ang = Math.atan2(vec.y, vec.x);
-		let pang = n.parent !== null ? n.parent.globalRotation : 0;
-		n.rotation = ang - pang;
-		n = n.parent;
-		i++;
-	}
-}
-
-/**
- * 
- * @param {Vec2} head 
- * @param {Vec2} tail 
- * @param {Vec2} tgt 
- */
-function _reach(head, tail, tgt) {
-	let c_dx = tail.x - head.x;
-	let c_dy = tail.y - head.y;
-	let c_dist = Math.sqrt(c_dx * c_dx + c_dy * c_dy);
-
-	let s_dx = tail.x - tgt.x;
-	let s_dy = tail.y - tgt.y;
-	let s_dist = Math.sqrt(s_dx * s_dx + s_dy * s_dy);
-
-	let scale = c_dist / s_dist;
-
-	return [
-		new Vec2(tgt.x, tgt.y),
-		new Vec2(tgt.x + s_dx * scale, tgt.y + s_dy * scale)
-	];
-}
-
-/**
- * 
- * @param {Array<Vec2>} segments
- * @param {Vec2} tgt 
- */
-function _fabrik(segments, tgt) {
-	let base = new Vec2(segments[segments.length - 1]);
-
-	// Forward
-	for (let i = 0; i < segments.length - 1; i++) {
-		let r = _reach(segments[i], segments[i + 1], tgt);
-		segments[i] = r[0];
-		tgt = r[1];
-	}
-	segments[segments.length - 1] = tgt;
-
-	// Backward
-	tgt = base;
-	for (let i = segments.length - 1; i > 0; i--) {
-		let r = _reach(segments[i], segments[i - 1], tgt);
-		segments[i] = r[0];
-		tgt = r[1];
-	}
-	segments[0] = tgt;
 }
 
 class StickView {
