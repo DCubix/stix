@@ -1,0 +1,19 @@
+stick(name = 'root', x = 120, y = 120) {
+	stick(name = 'torso', length = 50, rotation = 270d) {
+		stick(name = 'larn', length = 28, rotation = 130d) {
+			stick(name = 'lfarm', length = 28, rotation = 30d, ik=2)
+		}
+		stick(name = 'larn', length = 28, rotation = -130d) {
+			stick(name = 'lfarm', length = 28, rotation = -30d, ik=2)
+		}
+		stick(name = 'head', length = 40, shape = 'circle')
+	}
+
+	stick(name = 'lleg', length = 28, rotation = 130d) {
+		stick(name = 'lfleg', length = 28, rotation = -30d)
+	}
+
+	stick(name = 'rleg', length = 28, rotation = 50d) {
+		stick(name = 'rfleg', length = 28, rotation = 30d)
+	}
+}

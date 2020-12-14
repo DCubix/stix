@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Stix</title>
+</head>
+<body>
+	<canvas id="stixview" width="500" height="500"></canvas>
+	<script src="stix.js"></script>
+	<script>
+		let canvas = document.getElementById('stixview');
+		let view = new StickView(canvas);
+
+		async function load() {
+			let res = await fetch('./stickman.stx');
+			if (res && res.status === 200) {
+				let tx = await res.text();
+				
+				let stx = (new StickParser(tx)).parse();
+				view.sticks.push(stx);
+				view.redraw();
+			}
+		}
+		load();
+	</script>
+</body>
+</html>
