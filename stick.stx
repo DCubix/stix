@@ -1,0 +1,5 @@
+stick(name = 'root') {
+    stick(name = 's1', length=40) {
+       
+    }
+}

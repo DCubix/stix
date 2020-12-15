@@ -7,10 +7,23 @@
 </head>
 <body>
 	<canvas id="stixview" width="500" height="500"></canvas>
+	<br>
+	<button onclick="tl.toggleKeyframe()">KEYFRAME</button>
+	<button onclick="tl.playStop()">PLAY/STOP</button>
+	<br>
+	<div id="timeline">
+
+	</div>
+
 	<script src="stix.js"></script>
 	<script>
 		let canvas = document.getElementById('stixview');
 		let view = new StickView(canvas);
+
+		let tl = new Timeline("timeline");
+		tl.onplayback = function(frame) {
+			view.redraw(frame);
+		};
 
 		async function load() {
 			let res = await fetch('./stickman.stx');
@@ -20,6 +33,8 @@
 				let stx = (new StickParser(tx)).parse();
 				view.sticks.push(stx);
 				view.redraw();
+
+				tl.sticks = stx;
 			}
 		}
 		load();

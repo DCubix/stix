@@ -150,6 +150,13 @@ class Stick {
 		this.ik = 0;
 		this.bendy = 0;
 
+		this.animationMode = false;
+		this.animatedValues = {
+			x: 0,
+			y: 0,
+			rotation: 0
+		};
+
 		/** @type {Stick} */
 		this.parent = null;
 
@@ -174,12 +181,12 @@ class Stick {
 		return stick;
 	}
 
-	/**
-	 * Parses a stick figure from a file
-	 * @param {string} data 
-	 */
-	static parseStick(data) {
-		
+	isAnimating() {
+		let anim = this.animationMode;
+		if (this.parent !== null) {
+			anim = anim || this.parent.isAnimating();
+		}
+		return anim;
 	}
 
 	get root() {
@@ -190,7 +197,7 @@ class Stick {
 	}
 
 	get globalRotation() {
-		let rot = this.rotation;
+		let rot = this.isAnimating() ? this.animatedValues.rotation : this.rotation;
 		if (this.parent !== null) {
 			rot += this.parent.globalRotation;
 		}
@@ -198,7 +205,7 @@ class Stick {
 	}
 
 	get globalX() {
-		let x = this.x;
+		let x = this.isAnimating() ? this.animatedValues.x : this.x;
 		if (this.parent !== null) {
 			x += this.parent.globalX + Math.cos(this.parent.globalRotation) * this.parent.length;
 		}
@@ -206,7 +213,7 @@ class Stick {
 	}
 
 	get globalY() {
-		let y = this.y;
+		let y = this.isAnimating() ? this.animatedValues.y : this.y;
 		if (this.parent !== null) {
 			y += this.parent.globalY + Math.sin(this.parent.globalRotation) * this.parent.length;
 		}
@@ -225,7 +232,7 @@ class Stick {
 		return y;
 	}
 
-	animationFrame(frame) {
+	animate(frame) {
 		for (let i = 0; i < this.keyFrames.length - 1; i++) {
 			let ck = this.keyFrames[i];
 			let nk = this.keyFrames[i + 1];
@@ -234,31 +241,65 @@ class Stick {
 				let lx = Math.lerp(ck.xValue, nk.xValue, frac);
 				let ly = Math.lerp(ck.yValue, nk.yValue, frac);
 				let lr = Math.angleLerp(ck.rotationValue, nk.rotationValue, frac);
-				return { x: lx, y: ly, rotation: lr };
+				this.animatedValues.x = lx;
+				this.animatedValues.y = ly;
+				this.animatedValues.rotation = lr;
+				return;
 			}
 		}
 
 		if (this.keyFrames.length <= 0) {
-			return { x: this.x, y: this.y, rotation: this.rotation };
+			this.animatedValues.x = this.x;
+			this.animatedValues.y = this.y;
+			this.animatedValues.rotation = this.rotation;
+			return;
 		}
 
 		let last = this.keyFrames[this.keyFrames.length-1];
-		return { x: last.xValue, y: last.yValue, rotation: last.rotationValue };
+		this.animatedValues.x = last.xValue;
+		this.animatedValues.y = last.yValue;
+		this.animatedValues.rotation = last.rotationValue;
 	}
 
-	_childBendy(d) {
-		d = d || 0;
-		let cb = false;
-		for (let c of this.children) {
-			if (c.bendy >= 2) {
-				cb = true;
-			} else {
-				cb = c._childBendy(d+1);
+	getKeyframe(frame) {
+		for (let i = 0; i < this.keyFrames.length; i++) {
+			let ck = this.keyFrames[i];
+			if (frame === ck.frame) return ck;
+		}
+		return null;
+	}
+
+	getClosestKeyframe(frame) {
+		for (let i = 0; i < this.keyFrames.length; i++) {
+			let ck = this.keyFrames[i];
+			if (frame >= ck.frame) return ck;
+		}
+		return null;
+	}
+
+	/**
+	 * 
+	 * @param {number} frame 
+	 * @param {KeyFrame} kf 
+	 */
+	insertKeyframe(kf) {
+		let ekf = null;
+		for (let k of this.keyFrames) {
+			if (k.frame === kf.frame) {
+				ekf = k;
+				break;
 			}
 		}
-		return cb;
+		if (ekf === null) {
+			this.keyFrames.push(kf);
+		} else {
+			ekf.xValue = kf.xValue;
+			ekf.yValue = kf.yValue;
+			ekf.rotationValue = kf.rotationValue;
+		}
+		this.keyFrames.sort(function(a, b) { return a.frame - b.frame });
 	}
-
+	
 	getClosestBendyChild() {
 		let bc = this.bendy >= 2 ? this : null;
 		if (bc === null) {
@@ -277,7 +318,7 @@ class Stick {
 	 * Renders this stick and its children
 	 * @param {CanvasRenderingContext2D} ctx 
 	 */
-	render(ctx) {
+	render(ctx, colorOverride) {
 		let bendyChild = this.getClosestBendyChild();
 
 		let bendySticks = bendyChild !== null ? _ikSticks(bendyChild, bendyChild.bendy) : [];
@@ -288,7 +329,7 @@ class Stick {
 		let color = `rgb(${this.color[0]}, ${this.color[1]}, ${this.color[2]})`;
 		ctx.save();
 			if (this.shape === 'line') {
-				ctx.strokeStyle = color;
+				ctx.strokeStyle = colorOverride || color;
 				ctx.lineWidth = this.width;
 				ctx.lineCap = 'round';
 				ctx.lineJoin = 'round';
@@ -327,7 +368,7 @@ class Stick {
 					ctx.stroke();
 				}
 			} else if (this.shape === 'circle') {
-				ctx.fillStyle = color;
+				ctx.fillStyle = colorOverride || color;
 				ctx.beginPath();
 				//ctx.translate(this.length / 2, 0);
 				//ctx.rotate(this.globalRotation);
@@ -340,7 +381,7 @@ class Stick {
 		ctx.restore();
 
 		for (let s of this.children) {
-			s.render(ctx);
+			s.render(ctx, colorOverride);
 		}
 	}
 
@@ -384,7 +425,13 @@ class Stick {
 		for (let ob of this.children) {
 			children.push(...ob.allChildren);
 		}
-		return children;
+
+		let unq = [];
+		for (let c of children) {
+			if (!unq.includes(c)) unq.push(c);
+		}
+
+		return unq;
 	}
 
 }
@@ -694,7 +741,7 @@ class StickView {
 					let dx = p[0] - mx,
 						dy = p[1] - my;
 					let dist = Math.sqrt(dx * dx + dy * dy);
-					if (dist < SELECTOR_RADIUS + 4) {
+					if (dist < SELECTOR_RADIUS + 1) {
 						self.selectedStick = c;
 						self.selected = c.root;
 						if (c.ik > 0) {
@@ -723,7 +770,7 @@ class StickView {
 			let mx = e.clientX - rec.left;
 			let my = e.clientY - rec.top;
 
-			if (self.moving) {
+			if (self.moving && !self.selected.animationMode) {
 				if (self.selectedStick.parent !== null) {
 					if (self.selectedStick.ik <= 0) {
 						let dx = self.selectedStick.globalX - mx;
@@ -749,16 +796,282 @@ class StickView {
 		});
 	}
 
-	redraw() {
+	redraw(frame) {
+		frame = frame || 0;
+
 		this.ctx.fillStyle = 'white';
 		this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+		for (let s of this.sticks) {
+			if (s.isAnimating()) continue;
+			
+			let ckf = s.getClosestKeyframe(frame);
+			if (!ckf) continue;
+
+			s.animationMode = true;
+			s.animate(ckf.frame);
+			s.render(this.ctx, '#aaa');
+			s.animationMode = false;
+		}
 
 		for (let s of this.sticks) {
 			s.render(this.ctx);
 		}
 
-		if (this.selected !== null) {
+		if (this.selected !== null && !this.selected.animationMode) {
 			this.selected.renderSelector(this.ctx);
 		}
+	}
+}
+
+const KEYFRAME_CELL_WIDTH = 11;
+const KEYFRAME_CELL_HEIGHT = 20;
+class Timeline {
+	constructor(parent) {
+		this.canvas = document.createElement('canvas');
+		this.canvas.height = 0;
+		
+		let par = typeof(parent) === "string" ? document.getElementById(parent) : parent;
+		par.appendChild(this.canvas);
+
+		this.ctx = this.canvas.getContext('2d');
+
+		this.maxFrames = 100;
+		this.frameRate = 24;
+		this._frame = 0;
+
+		this._intervalHandle = null;
+
+		this.canvas.width = this.maxFrames * KEYFRAME_CELL_WIDTH + 100.0;
+
+		/** @type {Array<Stick>} */
+		this._sticks = [];
+
+		let self = this;
+		let drag = false;
+		this._clickAreaX = 0;
+		this.canvas.addEventListener('mousedown', function(e) {
+			let rec = self.canvas.getBoundingClientRect();
+			let mx = (e.clientX - rec.left) - self._clickAreaX;
+
+			self.frame = Math.min(Math.max(~~(mx / KEYFRAME_CELL_WIDTH), 0), self.maxFrames-1);
+
+			for (let s of self._sticks) {
+				s.animate(self._frame);
+
+				s.rotation = s.animatedValues.rotation;
+				s.x = s.animatedValues.x;
+				s.y = s.animatedValues.y;
+			}
+
+			if (self.onplayback) {
+				self.onplayback(self._frame);
+			}
+
+			drag = true;
+		});
+
+		this.canvas.addEventListener('mouseup', function(e) { drag = false; });
+		this.canvas.addEventListener('mouseleave', function(e) { drag = false; });
+
+		this.canvas.addEventListener('mousemove', function(e) {
+			if (drag) {
+				let rec = self.canvas.getBoundingClientRect();
+				let mx = (e.clientX - rec.left) - self._clickAreaX;
+
+				self.frame = Math.min(Math.max(~~(mx / KEYFRAME_CELL_WIDTH), 0), self.maxFrames-1);
+
+				for (let s of self._sticks) {
+					s.animate(self._frame);
+	
+					s.rotation = s.animatedValues.rotation;
+					s.x = s.animatedValues.x;
+					s.y = s.animatedValues.y;
+				}
+
+				if (self.onplayback) {
+					self.onplayback(self._frame);
+				}
+			}
+		});
+
+		this.onplayback = null;
+	}
+
+	play() {
+		this.stop();
+
+		for (let s of this._sticks) {
+			s.animationMode = true;
+		}
+
+		let self = this;
+		this._intervalHandle = setInterval(function() {
+			if (self.onplayback) {
+				self.onplayback(self._frame);
+			}
+			for (let s of self._sticks) {
+				s.animate(self._frame);
+			}
+			self._frame++;
+			self._frame %= self.maxFrames;
+			self.frame = Math.min(Math.max(self._frame, 0), self.maxFrames-1);
+		}, 1000 / this.frameRate);
+	}
+
+	stop() {
+		if (this._intervalHandle) {
+			clearInterval(this._intervalHandle);
+			this._intervalHandle = null;
+		}
+		for (let s of this._sticks) {
+			s.animationMode = false;
+		}
+		this.frame = 0;
+		if (this.onplayback) {
+			this.onplayback(0);
+		}
+		this.redraw();
+	}
+
+	playStop() {
+		if (this._intervalHandle) {
+			this.stop();
+		} else {
+			this.play();
+		}
+	}
+
+	toggleKeyframe() {
+		for (let s of this._sticks) {
+			s.insertKeyframe(new KeyFrame(this._frame, s.rotation, s.x, s.y));
+		}
+		this.redraw();
+	}
+
+	get frames() {
+		return this.maxFrames;
+	}
+
+	set frames(f) {
+		this.maxFrames = f;
+		this.canvas.width = f * KEYFRAME_CELL_WIDTH + 100.0;
+		this.redraw();
+	}
+
+	get frame() {
+		return this._frame;
+	}
+
+	set frame(f) {
+		this._frame = f;
+		this.redraw();
+	}
+
+	get sticks() {
+		return this._stick;
+	}
+
+	/** @param {Stick} s */
+	set sticks(s) {
+		this._sticks = s.allChildren;
+		this.canvas.height = (this._sticks.length+1) * KEYFRAME_CELL_HEIGHT;
+		this.redraw();
+		this.redraw();
+	}
+
+	redraw() {
+		let ctx = this.ctx;
+		ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+		let offy = KEYFRAME_CELL_HEIGHT, offx = -1;
+
+		for (let s of this._sticks) {
+			offx = Math.max(offx, ctx.measureText(s.name).width);
+		}
+		offx += 32;
+		this._clickAreaX = offx;
+
+		let viewHeight = this._sticks.length * KEYFRAME_CELL_HEIGHT;
+		let limitX = this._clickAreaX + this.maxFrames * KEYFRAME_CELL_WIDTH;
+
+		ctx.fillStyle = "#ccc";
+		ctx.fillRect(0, KEYFRAME_CELL_HEIGHT, offx, viewHeight);
+		ctx.fillRect(0, 0, this.canvas.width, KEYFRAME_CELL_HEIGHT);
+
+		ctx.fillStyle = "rgba(0, 100, 255, 0.5)";
+		ctx.fillRect(this.frame * KEYFRAME_CELL_WIDTH + offx, KEYFRAME_CELL_HEIGHT, KEYFRAME_CELL_WIDTH, viewHeight);
+
+		ctx.font = '12px Arial';
+		ctx.textBaseline = 'middle';
+
+		let frameTextX = 0;
+		let frameText = 'F ' + (this.frame+1);
+		let frameTextWidth = ctx.measureText(frameText).width + 10;
+		let calcX = this.frame * KEYFRAME_CELL_WIDTH + offx;
+		if (calcX + frameTextWidth >= limitX) {
+			frameTextX = -frameTextWidth + KEYFRAME_CELL_WIDTH;
+		}
+
+		ctx.fillStyle = "rgba(0, 100, 255, 0.5)";
+		ctx.fillRect(calcX + frameTextX, 0, frameTextWidth, KEYFRAME_CELL_HEIGHT);
+
+		ctx.fillStyle = 'black';
+		ctx.fillText(frameText, calcX + 5 + frameTextX, KEYFRAME_CELL_HEIGHT / 2 + 1);
+		ctx.fillStyle = 'white';
+		ctx.fillText(frameText, calcX + 5 + frameTextX, KEYFRAME_CELL_HEIGHT / 2);
+
+		ctx.font = '18px Arial';
+		ctx.textBaseline = 'top';
+
+		let first = false;
+		for (let s of this._sticks) {
+			let m = ctx.measureText(s.name);
+			ctx.fillStyle = '#555';
+
+			ctx.fillText(s.name, offx - (m.width+8), offy + 2);
+
+			for (let i = 0; i < this.maxFrames; i++) {
+				let kf = s.getKeyframe(i);
+
+				let x = i * KEYFRAME_CELL_WIDTH + offx;
+				let y = offy;
+
+				if ((i+1) % 2 === 0 && !first) {
+					ctx.beginPath();
+					ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+					ctx.rect(x, KEYFRAME_CELL_HEIGHT, KEYFRAME_CELL_WIDTH, viewHeight);
+					ctx.fill();
+				}
+
+				if (kf) {
+					ctx.beginPath();
+					ctx.fillStyle = 'blue';
+					ctx.arc(x + KEYFRAME_CELL_WIDTH / 2, y + KEYFRAME_CELL_HEIGHT / 2, KEYFRAME_CELL_WIDTH / 2.5, 0, Math.PI * 2);
+					ctx.fill();
+				}
+			}
+			first = true;
+
+			ctx.beginPath();
+			ctx.lineWidth = 0.6;
+			ctx.strokeStyle = '#777';
+			ctx.moveTo(0, offy);
+			ctx.lineTo(this.canvas.width, offy);
+			ctx.stroke();
+
+			offy += KEYFRAME_CELL_HEIGHT;
+		}
+
+		ctx.beginPath();
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+		ctx.rect(limitX, 0, 1000, 1000);
+		ctx.fill();
+
+		ctx.beginPath();
+		ctx.lineWidth = 0.6;
+		ctx.strokeStyle = '#777';
+		ctx.rect(0, 0, this.canvas.width, (this._sticks.length+1) * KEYFRAME_CELL_HEIGHT);
+		ctx.stroke();
 	}
 }
