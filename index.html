@@ -22,7 +22,8 @@
 
 		let tl = new Timeline("timeline");
 		tl.onplayback = function(frame) {
-			view.redraw(frame);
+			view.currentFrame = frame;
+			view.redraw();
 		};
 
 		async function load() {

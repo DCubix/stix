@@ -197,7 +197,7 @@ class Stick {
 	}
 
 	get globalRotation() {
-		let rot = this.isAnimating() ? this.animatedValues.rotation : this.rotation;
+		let rot = this.animationMode ? this.animatedValues.rotation : this.rotation;
 		if (this.parent !== null) {
 			rot += this.parent.globalRotation;
 		}
@@ -205,7 +205,7 @@ class Stick {
 	}
 
 	get globalX() {
-		let x = this.isAnimating() ? this.animatedValues.x : this.x;
+		let x = this.animationMode ? this.animatedValues.x : this.x;
 		if (this.parent !== null) {
 			x += this.parent.globalX + Math.cos(this.parent.globalRotation) * this.parent.length;
 		}
@@ -213,7 +213,7 @@ class Stick {
 	}
 
 	get globalY() {
-		let y = this.isAnimating() ? this.animatedValues.y : this.y;
+		let y = this.animationMode ? this.animatedValues.y : this.y;
 		if (this.parent !== null) {
 			y += this.parent.globalY + Math.sin(this.parent.globalRotation) * this.parent.length;
 		}
@@ -270,10 +270,16 @@ class Stick {
 	}
 
 	getClosestKeyframe(frame) {
-		for (let i = 0; i < this.keyFrames.length; i++) {
+		for (let i = 0; i < this.keyFrames.length - 1; i++) {
 			let ck = this.keyFrames[i];
-			if (frame >= ck.frame) return ck;
+			let nk = this.keyFrames[i + 1];
+			if (frame >= ck.frame && frame < nk.frame) return ck;
 		}
+
+		if (this.keyFrames.length > 0) {
+			return this.keyFrames[this.keyFrames.length - 1];
+		}
+
 		return null;
 	}
 
@@ -318,7 +324,9 @@ class Stick {
 	 * Renders this stick and its children
 	 * @param {CanvasRenderingContext2D} ctx 
 	 */
-	render(ctx, colorOverride) {
+	render(ctx, colorOverride, renderChildren) {
+		renderChildren = renderChildren || true;
+
 		let bendyChild = this.getClosestBendyChild();
 
 		let bendySticks = bendyChild !== null ? _ikSticks(bendyChild, bendyChild.bendy) : [];
@@ -380,8 +388,10 @@ class Stick {
 			}
 		ctx.restore();
 
-		for (let s of this.children) {
-			s.render(ctx, colorOverride);
+		if (renderChildren) {
+			for (let s of this.children) {
+				s.render(ctx, colorOverride);
+			}
 		}
 	}
 
@@ -408,6 +418,24 @@ class Stick {
 
 		for (let s of this.children) {
 			s.renderSelector(ctx);
+		}
+	}
+
+	/**
+	 * Renders the ghost of this figure
+	 * @param {CanvasRenderingContext2D} ctx 
+	 */
+	renderGhost(ctx, frame) {
+		let ckf = this.getClosestKeyframe(frame);
+		if (!ckf) return;
+
+		this.animationMode = true;
+		this.animate(frame);
+		this.render(ctx, '#aaa', false);
+		this.animationMode = false;
+
+		for (let s of this.children) {
+			s.renderGhost(ctx, frame);
 		}
 	}
 
@@ -722,6 +750,7 @@ class StickView {
 		this.sticks = [];
 
 		this.moving = false;
+		this.currentFrame = 0;
 
 		let px = 0;
 		let py = 0;
@@ -796,22 +825,15 @@ class StickView {
 		});
 	}
 
-	redraw(frame) {
-		frame = frame || 0;
+	redraw() {
+		let frame = this.currentFrame;
 
 		this.ctx.fillStyle = 'white';
 		this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
 		for (let s of this.sticks) {
 			if (s.isAnimating()) continue;
-			
-			let ckf = s.getClosestKeyframe(frame);
-			if (!ckf) continue;
-
-			s.animationMode = true;
-			s.animate(ckf.frame);
-			s.render(this.ctx, '#aaa');
-			s.animationMode = false;
+			s.renderGhost(this.ctx, frame);
 		}
 
 		for (let s of this.sticks) {
