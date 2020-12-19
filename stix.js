@@ -261,6 +261,27 @@ class Stick {
 		this.animatedValues.rotation = last.rotationValue;
 	}
 
+	getAnimationFrame(frame) {
+		for (let i = 0; i < this.keyFrames.length - 1; i++) {
+			let ck = this.keyFrames[i];
+			let nk = this.keyFrames[i + 1];
+			if (frame >= ck.frame && frame < nk.frame) {
+				let frac = (frame - ck.frame) / (nk.frame - ck.frame);
+				let lx = Math.lerp(ck.xValue, nk.xValue, frac);
+				let ly = Math.lerp(ck.yValue, nk.yValue, frac);
+				let lr = Math.angleLerp(ck.rotationValue, nk.rotationValue, frac);
+				return { x: lx, y: ly, rotation: lr };
+			}
+		}
+
+		if (this.keyFrames.length <= 0) {
+			return { x: this.x, y: this.y, rotation: this.rotation };
+		}
+
+		let last = this.keyFrames[this.keyFrames.length-1];
+		return { x: last.xValue, y: last.yValue, rotation: last.rotationValue };
+	}
+
 	getKeyframe(frame) {
 		for (let i = 0; i < this.keyFrames.length; i++) {
 			let ck = this.keyFrames[i];
@@ -296,14 +317,24 @@ class Stick {
 				break;
 			}
 		}
-		if (ekf === null) {
-			this.keyFrames.push(kf);
-		} else {
-			ekf.xValue = kf.xValue;
-			ekf.yValue = kf.yValue;
-			ekf.rotationValue = kf.rotationValue;
+
+		let changed = false;
+		let prev = this.getClosestKeyframe(kf.frame);
+		if (prev === null ||
+			(prev !== null && (prev.xValue !== this.x || prev.yValue !== this.y || prev.rotationValue !== this.rotation))) {
+			changed = true;
 		}
-		this.keyFrames.sort(function(a, b) { return a.frame - b.frame });
+
+		if (changed) {
+			if (ekf === null) {
+				this.keyFrames.push(kf);
+			} else {
+				ekf.xValue = kf.xValue;
+				ekf.yValue = kf.yValue;
+				ekf.rotationValue = kf.rotationValue;
+			}
+			this.keyFrames.sort(function(a, b) { return a.frame - b.frame });
+		}
 	}
 	
 	getClosestBendyChild() {
@@ -325,7 +356,7 @@ class Stick {
 	 * @param {CanvasRenderingContext2D} ctx 
 	 */
 	render(ctx, colorOverride, renderChildren) {
-		renderChildren = renderChildren || true;
+		renderChildren = renderChildren === undefined ? true : renderChildren;
 
 		let bendyChild = this.getClosestBendyChild();
 
@@ -430,12 +461,18 @@ class Stick {
 		if (!ckf) return;
 
 		this.animationMode = true;
-		this.animate(frame);
-		this.render(ctx, '#aaa', false);
-		this.animationMode = false;
+		for (let c of this.allChildren) {
+			c.animationMode = true;
+			c.animatedValues = c.getAnimationFrame(ckf.frame);
+		}
 
-		for (let s of this.children) {
-			s.renderGhost(ctx, frame);
+		let tmp = this.animatedValues;
+		this.animatedValues = this.getAnimationFrame(ckf.frame);
+		this.render(ctx, '#aaa');
+		this.animatedValues = tmp;
+		this.animationMode = false;
+		for (let c of this.allChildren) {
+			c.animationMode = false;
 		}
 	}
 
@@ -869,25 +906,39 @@ class Timeline {
 		/** @type {Array<Stick>} */
 		this._sticks = [];
 
+		/** @type {KeyFrame} */
+		this.selectedKeyframe = null;
+
 		let self = this;
 		let drag = false;
+		let clickArea = '';
 		this._clickAreaX = 0;
 		this.canvas.addEventListener('mousedown', function(e) {
 			let rec = self.canvas.getBoundingClientRect();
 			let mx = (e.clientX - rec.left) - self._clickAreaX;
+			let my = (e.clientY - rec.top);
 
-			self.frame = Math.min(Math.max(~~(mx / KEYFRAME_CELL_WIDTH), 0), self.maxFrames-1);
+			let frame = Math.round((mx - KEYFRAME_CELL_WIDTH/2) / KEYFRAME_CELL_WIDTH);
+			let stick = Math.round(((my - KEYFRAME_CELL_HEIGHT) - KEYFRAME_CELL_HEIGHT/2) / KEYFRAME_CELL_HEIGHT);
 
-			for (let s of self._sticks) {
-				s.animate(self._frame);
+			if (self._sticks[stick] && self._sticks[stick].getKeyframe(frame) !== null) {
+				self.selectedKeyframe = self._sticks[stick].getKeyframe(frame);
+				self.redraw();
+			} else {
+				self.selectedKeyframe = null;
+				self.frame = Math.min(Math.max(~~(mx / KEYFRAME_CELL_WIDTH), 0), self.maxFrames-1);
 
-				s.rotation = s.animatedValues.rotation;
-				s.x = s.animatedValues.x;
-				s.y = s.animatedValues.y;
-			}
+				for (let s of self._sticks) {
+					s.animate(self._frame);
 
-			if (self.onplayback) {
-				self.onplayback(self._frame);
+					s.rotation = s.animatedValues.rotation;
+					s.x = s.animatedValues.x;
+					s.y = s.animatedValues.y;
+				}
+
+				if (self.onplayback) {
+					self.onplayback(self._frame);
+				}
 			}
 
 			drag = true;
@@ -897,11 +948,14 @@ class Timeline {
 		this.canvas.addEventListener('mouseleave', function(e) { drag = false; });
 
 		this.canvas.addEventListener('mousemove', function(e) {
-			if (drag) {
-				let rec = self.canvas.getBoundingClientRect();
-				let mx = (e.clientX - rec.left) - self._clickAreaX;
+			let rec = self.canvas.getBoundingClientRect();
+			let mx = (e.clientX - rec.left) - self._clickAreaX;
+			let my = (e.clientY - rec.top);
 
-				self.frame = Math.min(Math.max(~~(mx / KEYFRAME_CELL_WIDTH), 0), self.maxFrames-1);
+			let frame = Math.round((mx - KEYFRAME_CELL_WIDTH/2) / KEYFRAME_CELL_WIDTH);
+
+			if (drag && !self.selectedKeyframe) {
+				self.frame = Math.min(Math.max(~~(frame), 0), self.maxFrames-1);
 
 				for (let s of self._sticks) {
 					s.animate(self._frame);
@@ -914,6 +968,19 @@ class Timeline {
 				if (self.onplayback) {
 					self.onplayback(self._frame);
 				}
+			} else if (drag && self.selectedKeyframe) {
+				let fra = Math.min(Math.max(~~(frame), 0), self.maxFrames-1);
+				self.selectedKeyframe.frame = fra;
+
+				for (let s of self._sticks) {
+					s.keyFrames.sort(function(a, b) { return a.frame - b.frame });
+				}
+
+				if (self.onplayback) {
+					self.onplayback(self._frame);
+				}
+
+				self.redraw();
 			}
 		});
 
@@ -1067,10 +1134,18 @@ class Timeline {
 				}
 
 				if (kf) {
+					let rad = kf === this.selectedKeyframe ? KEYFRAME_CELL_WIDTH / 2.5 : KEYFRAME_CELL_WIDTH / 4;
 					ctx.beginPath();
 					ctx.fillStyle = 'blue';
-					ctx.arc(x + KEYFRAME_CELL_WIDTH / 2, y + KEYFRAME_CELL_HEIGHT / 2, KEYFRAME_CELL_WIDTH / 2.5, 0, Math.PI * 2);
+					ctx.arc(x + KEYFRAME_CELL_WIDTH / 2, y + KEYFRAME_CELL_HEIGHT / 2, rad, 0, Math.PI * 2);
 					ctx.fill();
+
+					if (kf === this.selectedKeyframe) {
+						ctx.beginPath();
+						ctx.strokeStyle = 'rgb(200, 230, 0)';
+						ctx.arc(x + KEYFRAME_CELL_WIDTH / 2, y + KEYFRAME_CELL_HEIGHT / 2, rad, 0, Math.PI * 2);
+						ctx.stroke();
+					}
 				}
 			}
 			first = true;
